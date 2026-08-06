@@ -1,0 +1,3 @@
+# In-memory dedup state, evicted by the watermark
+
+Dedup state (seen Reading IDs) lives in an in-memory store for v1, not Redis — multi-node partitioning is a stretch goal, not a v1 requirement, so there's no cross-process state to share yet. Eviction is tied to the watermark: once a Reading's timestamp falls outside the lateness window, its Reading ID can never legally reappear, so it's safe to drop from dedup state. This keeps memory bounded without a separate TTL/LRU mechanism. Dedup sits behind an interface so a Redis-backed implementation can be swapped in later if the stretch goal is picked up.

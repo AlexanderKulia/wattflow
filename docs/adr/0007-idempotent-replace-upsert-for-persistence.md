@@ -1,0 +1,3 @@
+# Persistence writes are replace-on-conflict upserts, never increments
+
+Storage upserts on `(device_id, bucket)`, using `ON CONFLICT DO UPDATE SET kwh = excluded.kwh` — a replace, not `kwh = kwh + excluded.kwh`. Aggregation already computes each bucket's final total in-memory before handing it to storage (a bucket is only emitted once its device's watermark has passed it, per ADR-0004), so the write is just persisting an already-correct number. An increment-on-conflict would double-count on any retried or replayed batch write; replace-on-conflict makes a retry a safe no-op — same key, same value. This is what makes "double-counting must be impossible" hold at the storage layer, not just in the in-memory aggregate.
