@@ -4,9 +4,9 @@
 
 **Blocked by:** None — can start immediately
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Producer emits Readings with all four required fields
-- [ ] Producer is configurable to inject: out-of-order delivery, duplicates, delayed events, burst load
-- [ ] Readings flow producer → ingestion (pass-through) → aggregation (naive sum) → output, via bounded channels
-- [ ] Running `go run ./cmd/wattflow` demonstrates the full path with visible output
+- [x] Producer emits Readings with all four required fields
+- [x] Producer is configurable to inject: out-of-order delivery, duplicates, delayed events, burst load
+- [x] Readings flow producer → ingestion (pass-through) → aggregation (naive sum) → output, via bounded channels
+- [x] Running `go run ./cmd/wattflow` demonstrates the full path with visible output

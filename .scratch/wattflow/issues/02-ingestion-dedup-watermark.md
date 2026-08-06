@@ -4,11 +4,12 @@
 
 **Blocked by:** 01
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Dedup key is `(device_id, reading_id)`, with content-hash fallback when reading_id is absent/unreliable
-- [ ] Watermark tracked independently per `device_id`
-- [ ] Lateness window is bounded and configurable
-- [ ] Lateness checked before dedup; late-and-duplicate Readings classified `late` only
-- [ ] Dropped Readings logged and counted per reason (`late`, `duplicate`)
-- [ ] Dedup state for a device evicted once outside that device's lateness window
+- [x] Producer gets a knob to emit Readings with absent/unreliable `reading_id`, so the content-hash fallback path is actually exercised, not dead code
+- [x] Dedup key is `(device_id, reading_id)`, with content-hash fallback when reading_id is absent/unreliable
+- [x] Watermark tracked independently per `device_id`
+- [x] Lateness window is bounded and configurable
+- [x] Lateness checked before dedup; late-and-duplicate Readings classified `late` only
+- [x] Dropped Readings logged and counted per reason (`late`, `duplicate`)
+- [x] Dedup state for a device evicted once outside that device's lateness window

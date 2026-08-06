@@ -11,16 +11,24 @@ import (
 func main() {
 	fmt.Println("wattflow starting")
 
-	cfg := producer.Config{
-		DeviceCount:           1,
-		ReadingCountPerSecond: 10,
-		Count:                 100,
+	producerCfg := producer.Config{
+		DeviceCount:                    1,
+		ReadingCountPerSecond:          10,
+		Count:                          100,
+		OutOfOrderProbability:          0.1,
+		DuplicateProbability:           0.05,
+		DelayProbability:               0.05,
+		UnreliableReadingIDProbability: 0.01,
 	}
-	cfg.Validate()
+	producerCfg.Validate()
 
-	ingestCh := make(chan producer.Reading, cfg.Count)
-	aggCh := make(chan producer.Reading, cfg.Count)
-	go producer.Run(cfg, ingestCh)
-	go ingestion.Run(ingestCh, aggCh)
+	ingestConfig := ingestion.Config{
+		LatenessWindowSeconds: 15 * 60,
+	}
+
+	ingestCh := make(chan producer.Reading, producerCfg.Count)
+	aggCh := make(chan producer.Reading, producerCfg.Count)
+	go producer.Run(producerCfg, ingestCh)
+	go ingestion.Run(ingestConfig, ingestCh, aggCh)
 	aggregation.Run(aggCh)
 }

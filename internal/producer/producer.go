@@ -16,16 +16,17 @@ type Reading struct {
 }
 
 type Config struct {
-	DeviceCount           int
-	ReadingCountPerSecond int
-	OutOfOrderProbability float32
-	DuplicateProbability  float32
-	DelayProbability      float32
-	MaxDelaySeconds       int
-	BurstSize             int
-	BurstIntervalSeconds  int
-	Duration              time.Duration
-	Count                 int
+	DeviceCount                    int
+	ReadingCountPerSecond          int
+	OutOfOrderProbability          float32
+	DuplicateProbability           float32
+	UnreliableReadingIDProbability float32
+	DelayProbability               float32
+	MaxDelaySeconds                int
+	BurstSize                      int
+	BurstIntervalSeconds           int
+	Duration                       time.Duration
+	Count                          int
 }
 
 func (cfg *Config) Validate() {
@@ -59,18 +60,27 @@ func Run(cfg Config, out chan<- Reading) {
 			break
 		}
 
-		timestamp := time.Now()
-		if rand.Float32() <= cfg.OutOfOrderProbability {
-			timestamp = timestamp.Add(-time.Duration(rand.Intn(10)+1) * time.Second)
-		}
-
 		if prevReading != nil && rand.Float32() <= cfg.DuplicateProbability {
 			reading = *prevReading
 		} else {
+			var timestamp time.Time
+			if rand.Float32() <= cfg.OutOfOrderProbability {
+				timestamp = time.Now().Add(-time.Duration(rand.Intn(10)+1) * time.Second)
+			} else {
+				timestamp = time.Now()
+			}
+
+			var readingID string
+			if rand.Float32() <= cfg.UnreliableReadingIDProbability {
+				readingID = ""
+			} else {
+				readingID = uuid.NewString()
+			}
+
 			reading = Reading{
 				DeviceID:  devices[rand.Intn(len(devices))],
 				Timestamp: timestamp,
-				ReadingID: uuid.NewString(),
+				ReadingID: readingID,
 				KWh:       rand.Float64(),
 			}
 		}
