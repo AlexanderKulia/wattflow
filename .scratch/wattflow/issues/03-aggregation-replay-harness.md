@@ -4,10 +4,10 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Aggregation buckets are calendar-aligned (e.g. `:00/:15/:30/:45`), independent of arrival order
-- [ ] A Bucket is emitted exactly once, only after its device's watermark has passed it
-- [ ] Replay harness replays a fixed input set under in-order, reordered, duplicated, and mixed delivery patterns
-- [ ] Harness asserts bitwise-identical final aggregate output across all patterns
-- [ ] Harness runs in CI
+- [x] Aggregation buckets are calendar-aligned (e.g. `:00/:15/:30/:45`), independent of arrival order
+- [x] A Bucket is emitted exactly once, only after its device's watermark has passed it
+- [x] Replay harness replays a fixed input set under in-order, reordered, duplicated, and mixed delivery patterns
+- [x] Harness asserts bitwise-identical final aggregate output across all patterns
+- [x] Harness runs in CI

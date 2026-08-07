@@ -22,9 +22,9 @@ type Config struct {
 	DuplicateProbability           float32
 	UnreliableReadingIDProbability float32
 	DelayProbability               float32
-	MaxDelaySeconds                int
+	MaxDelay                       time.Duration
 	BurstSize                      int
-	BurstIntervalSeconds           int
+	BurstInterval                  time.Duration
 	Duration                       time.Duration
 	Count                          int
 }
@@ -86,7 +86,7 @@ func Run(cfg Config, out chan<- Reading) {
 		}
 
 		if rand.Float32() <= cfg.DelayProbability {
-			time.Sleep(time.Duration(rand.Float32() * float32(cfg.MaxDelaySeconds) * float32(time.Second)))
+			time.Sleep(time.Duration(rand.Float32() * float32(cfg.MaxDelay)))
 		}
 		out <- reading
 		prevReading = &reading
@@ -97,7 +97,7 @@ func Run(cfg Config, out chan<- Reading) {
 			sentInBurst++
 
 			if sentInBurst >= cfg.BurstSize {
-				time.Sleep(time.Duration(cfg.BurstIntervalSeconds) * time.Second)
+				time.Sleep(cfg.BurstInterval)
 				sentInBurst = 0
 			}
 		} else {

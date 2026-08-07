@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
 	"github.com/AlexanderKulia/wattflow/internal/ingestion"
@@ -21,14 +22,25 @@ func main() {
 		UnreliableReadingIDProbability: 0.01,
 	}
 	producerCfg.Validate()
-
+	latenessWindow := time.Duration(15) * time.Minute
 	ingestConfig := ingestion.Config{
-		LatenessWindowSeconds: 15 * 60,
+		LatenessWindow: latenessWindow,
+	}
+	aggregationCfg := aggregation.Config{
+		LatenessWindow: latenessWindow,
+		BucketSize:     time.Duration(15) * time.Minute,
 	}
 
 	ingestCh := make(chan producer.Reading, producerCfg.Count)
 	aggCh := make(chan producer.Reading, producerCfg.Count)
+	aggOutCh := make(chan aggregation.Bucket, producerCfg.DeviceCount*2)
 	go producer.Run(producerCfg, ingestCh)
 	go ingestion.Run(ingestConfig, ingestCh, aggCh)
-	aggregation.Run(aggCh)
+
+	go func(ch <-chan aggregation.Bucket) {
+		for bucket := range ch {
+			fmt.Println(bucket)
+		}
+	}(aggOutCh)
+	aggregation.Run(aggregationCfg, aggCh, aggOutCh)
 }

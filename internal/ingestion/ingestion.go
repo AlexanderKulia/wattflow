@@ -53,7 +53,7 @@ type deviceState struct {
 }
 
 type Config struct {
-	LatenessWindowSeconds int
+	LatenessWindow time.Duration
 }
 
 func Run(cfg Config, in <-chan producer.Reading, out chan<- producer.Reading) {
@@ -69,9 +69,9 @@ func Run(cfg Config, in <-chan producer.Reading, out chan<- producer.Reading) {
 			devices[reading.DeviceID] = state
 		}
 
-		cutoffTimestamp := state.watermark.Add(-time.Duration(cfg.LatenessWindowSeconds) * time.Second)
+		cutoffTimestamp := state.watermark.Add(-cfg.LatenessWindow)
 		if reading.Timestamp.Before(cutoffTimestamp) {
-			log.Printf("Reading for %s for DeviceID %s dropped because it was %s seconds late", reading.Timestamp, reading.DeviceID, cutoffTimestamp.Sub(reading.Timestamp))
+			log.Printf("Reading for %s for DeviceID %s dropped because it was %s late", reading.Timestamp, reading.DeviceID, cutoffTimestamp.Sub(reading.Timestamp))
 			state.dropCounter[Late]++
 			continue
 		}
@@ -96,7 +96,7 @@ func Run(cfg Config, in <-chan producer.Reading, out chan<- producer.Reading) {
 			state.seen[key] = struct{}{}
 
 			// recalculate because current reading might have advanced the watermark
-			cutoffTimestamp := state.watermark.Add(-time.Duration(cfg.LatenessWindowSeconds) * time.Second)
+			cutoffTimestamp := state.watermark.Add(-cfg.LatenessWindow)
 			for len(state.expiry) > 0 && state.expiry[0].timestamp.Before(cutoffTimestamp) {
 				evicted := heap.Pop(&state.expiry).(dedupEntry)
 				delete(state.seen, evicted.key)
