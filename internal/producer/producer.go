@@ -81,7 +81,7 @@ func Run(cfg Config, out chan<- Reading) {
 				DeviceID:  devices[rand.Intn(len(devices))],
 				Timestamp: timestamp,
 				ReadingID: readingID,
-				KWh:       rand.Float64(),
+				KWh:       rand.Float64() * 100,
 			}
 		}
 
