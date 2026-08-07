@@ -4,8 +4,8 @@
 
 **Blocked by:** 03
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Writes are batched, flushed on size-or-time trigger
-- [ ] Upsert on `(device_id, bucket)` uses replace-on-conflict, not increment-on-conflict
-- [ ] Test demonstrates a retried/replayed batch write for the same Bucket does not change the persisted total
+- [x] Writes are batched, flushed on size-or-time trigger
+- [x] Upsert on `(device_id, bucket)` uses replace-on-conflict, not increment-on-conflict
+- [x] Test demonstrates a retried/replayed batch write for the same Bucket does not change the persisted total

@@ -23,6 +23,10 @@ type Bucket struct {
 	KWh         float64
 }
 
+func (bucket *Bucket) PgSize() int {
+	return len(bucket.DeviceID) + 16 // timestampz = 8 bytes, float8 = 8 bytes
+}
+
 func Run(cfg Config, in <-chan producer.Reading, out chan<- Bucket) {
 	devices := make(map[string]*deviceState)
 

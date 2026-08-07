@@ -2,15 +2,27 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
 	"github.com/AlexanderKulia/wattflow/internal/ingestion"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
+	"github.com/AlexanderKulia/wattflow/internal/storage"
 )
 
 func main() {
 	fmt.Println("wattflow starting")
+
+	storageCfg := storage.Config{
+		DSN:               "postgres://test:test@localhost:5432/test?sslmode=disable",
+		BatchSizeBytes:    2 * 1024 * 1024,
+		BatchFlushTimeout: time.Duration(30) * time.Second,
+	}
+	err := storage.Migrate(storageCfg.DSN)
+	if err != nil {
+		os.Exit(1)
+	}
 
 	producerCfg := producer.Config{
 		DeviceCount:                    1,
@@ -33,14 +45,9 @@ func main() {
 
 	ingestCh := make(chan producer.Reading, producerCfg.Count)
 	aggCh := make(chan producer.Reading, producerCfg.Count)
-	aggOutCh := make(chan aggregation.Bucket, producerCfg.DeviceCount*2)
+	storageCh := make(chan aggregation.Bucket, producerCfg.DeviceCount*2)
 	go producer.Run(producerCfg, ingestCh)
 	go ingestion.Run(ingestConfig, ingestCh, aggCh)
-
-	go func(ch <-chan aggregation.Bucket) {
-		for bucket := range ch {
-			fmt.Println(bucket)
-		}
-	}(aggOutCh)
-	aggregation.Run(aggregationCfg, aggCh, aggOutCh)
+	go aggregation.Run(aggregationCfg, aggCh, storageCh)
+	storage.Run(storageCfg, storageCh)
 }
