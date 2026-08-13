@@ -3,6 +3,7 @@ package producer
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -13,6 +14,18 @@ type Reading struct {
 	Timestamp time.Time
 	ReadingID string
 	KWh       float64
+}
+
+func (r Reading) PgSize() int {
+	return len(r.DeviceID) + len(r.ReadingID) + 16 // timestampz = 8 bytes, float8 = 8 bytes
+}
+
+func (r Reading) DedupKey() string {
+	if len(r.ReadingID) == 0 {
+		return r.DeviceID + "|" + r.Timestamp.String() + "|" + strconv.FormatFloat(r.KWh, 'e', -1, 64)
+	} else {
+		return r.DeviceID + "|" + r.ReadingID
+	}
 }
 
 type Config struct {

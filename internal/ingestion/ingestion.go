@@ -3,7 +3,6 @@ package ingestion
 import (
 	"container/heap"
 	"log"
-	"strconv"
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/producer"
@@ -56,7 +55,7 @@ type Config struct {
 	LatenessWindow time.Duration
 }
 
-func Run(cfg Config, in <-chan producer.Reading, out chan<- producer.Reading) {
+func Run(cfg Config, in <-chan producer.Reading, aggOut chan<- producer.Reading, storageOut chan<- producer.Reading) {
 	devices := make(map[string]*deviceState)
 
 	for reading := range in {
@@ -76,13 +75,7 @@ func Run(cfg Config, in <-chan producer.Reading, out chan<- producer.Reading) {
 			continue
 		}
 
-		var key string
-		if len(reading.ReadingID) == 0 {
-			key = reading.DeviceID + "|" + reading.Timestamp.String() + "|" + strconv.FormatFloat(reading.KWh, 'e', -1, 64)
-		} else {
-			key = reading.DeviceID + "|" + reading.ReadingID
-		}
-
+		key := reading.DedupKey()
 		_, seen := state.seen[key]
 		if seen {
 			log.Printf("Duplicate entry for key %s discarded", key)
@@ -103,7 +96,9 @@ func Run(cfg Config, in <-chan producer.Reading, out chan<- producer.Reading) {
 			}
 		}
 
-		out <- reading
+		aggOut <- reading
+		storageOut <- reading
 	}
-	close(out)
+	close(aggOut)
+	close(storageOut)
 }

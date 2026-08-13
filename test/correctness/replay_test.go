@@ -19,6 +19,7 @@ func runPipeline(readings []producer.Reading) []aggregation.Bucket {
 	inCh := make(chan producer.Reading)
 	aggCh := make(chan producer.Reading)
 	outCh := make(chan aggregation.Bucket)
+	storageCh := make(chan producer.Reading)
 
 	go func() {
 		for _, r := range readings {
@@ -27,7 +28,11 @@ func runPipeline(readings []producer.Reading) []aggregation.Bucket {
 		close(inCh)
 	}()
 
-	go ingestion.Run(ingestCfg, inCh, aggCh)
+	go ingestion.Run(ingestCfg, inCh, aggCh, storageCh)
+	go func() {
+		for range storageCh {
+		}
+	}()
 
 	var buckets []aggregation.Bucket
 	done := make(chan struct{})

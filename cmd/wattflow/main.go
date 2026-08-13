@@ -14,12 +14,18 @@ import (
 func main() {
 	fmt.Println("wattflow starting")
 
-	storageCfg := storage.Config{
-		DSN:               "postgres://test:test@localhost:5432/test?sslmode=disable",
+	dsn := "postgres://test:test@localhost:5432/test?sslmode=disable"
+	bucketStorageCfg := storage.Config{
+		DSN:               dsn,
 		BatchSizeBytes:    2 * 1024 * 1024,
 		BatchFlushTimeout: time.Duration(30) * time.Second,
 	}
-	err := storage.Migrate(storageCfg.DSN)
+	readingStorageCfg := storage.Config{
+		DSN:               dsn,
+		BatchSizeBytes:    2 * 1024 * 1024,
+		BatchFlushTimeout: time.Duration(5) * time.Second,
+	}
+	err := storage.Migrate(dsn)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -45,9 +51,11 @@ func main() {
 
 	ingestCh := make(chan producer.Reading, producerCfg.Count)
 	aggCh := make(chan producer.Reading, producerCfg.Count)
-	storageCh := make(chan aggregation.Bucket, producerCfg.DeviceCount*2)
+	bucketStorageCh := make(chan aggregation.Bucket, producerCfg.DeviceCount*2)
+	readingStorageCh := make(chan producer.Reading, producerCfg.Count)
 	go producer.Run(producerCfg, ingestCh)
-	go ingestion.Run(ingestConfig, ingestCh, aggCh)
-	go aggregation.Run(aggregationCfg, aggCh, storageCh)
-	storage.Run(storageCfg, storageCh)
+	go ingestion.Run(ingestConfig, ingestCh, aggCh, readingStorageCh)
+	go aggregation.Run(aggregationCfg, aggCh, bucketStorageCh)
+	go storage.RunReadings(readingStorageCfg, readingStorageCh)
+	storage.RunBuckets(bucketStorageCfg, bucketStorageCh)
 }
