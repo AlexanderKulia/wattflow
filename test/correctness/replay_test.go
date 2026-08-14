@@ -1,12 +1,14 @@
 package correctness
 
 import (
+	"context"
 	"reflect"
 	"sort"
 	"testing"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
 	"github.com/AlexanderKulia/wattflow/internal/ingestion"
+	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
 )
 
@@ -16,14 +18,14 @@ func runPipeline(readings []producer.Reading) []aggregation.Bucket {
 	ingestCfg := ingestion.Config{LatenessWindow: FixtureLatenessWindow}
 	aggCfg := aggregation.Config{LatenessWindow: FixtureLatenessWindow, BucketSize: FixtureBucketSize}
 
-	inCh := make(chan producer.Reading)
-	aggCh := make(chan producer.Reading)
-	outCh := make(chan aggregation.Bucket)
-	storageCh := make(chan producer.Reading)
+	inCh := make(chan observability.Envelope[producer.Reading])
+	aggCh := make(chan observability.Envelope[producer.Reading])
+	outCh := make(chan observability.Envelope[aggregation.Bucket])
+	storageCh := make(chan observability.Envelope[producer.Reading])
 
 	go func() {
 		for _, r := range readings {
-			inCh <- r
+			inCh <- observability.Envelope[producer.Reading]{Data: r, Ctx: context.Background()}
 		}
 		close(inCh)
 	}()
@@ -37,8 +39,8 @@ func runPipeline(readings []producer.Reading) []aggregation.Bucket {
 	var buckets []aggregation.Bucket
 	done := make(chan struct{})
 	go func() {
-		for b := range outCh {
-			buckets = append(buckets, b)
+		for env := range outCh {
+			buckets = append(buckets, env.Data)
 		}
 		close(done)
 	}()

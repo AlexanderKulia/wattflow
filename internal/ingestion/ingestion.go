@@ -5,7 +5,9 @@ import (
 	"log"
 	"time"
 
+	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
+	"go.opentelemetry.io/otel"
 )
 
 type expiryHeap []dedupEntry
@@ -55,10 +57,13 @@ type Config struct {
 	LatenessWindow time.Duration
 }
 
-func Run(cfg Config, in <-chan producer.Reading, aggOut chan<- producer.Reading, storageOut chan<- producer.Reading) {
+func Run(cfg Config, in <-chan observability.Envelope[producer.Reading], aggOut chan<- observability.Envelope[producer.Reading], storageOut chan<- observability.Envelope[producer.Reading]) {
 	devices := make(map[string]*deviceState)
 
-	for reading := range in {
+	for env := range in {
+		reading := env.Data
+		ctx, span := otel.Tracer("wattflow/ingestion").Start(env.Ctx, "ingest")
+
 		state, ok := devices[reading.DeviceID]
 		if !ok {
 			state = &deviceState{
@@ -72,6 +77,7 @@ func Run(cfg Config, in <-chan producer.Reading, aggOut chan<- producer.Reading,
 		if reading.Timestamp.Before(cutoffTimestamp) {
 			log.Printf("Reading for %s for DeviceID %s dropped because it was %s late", reading.Timestamp, reading.DeviceID, cutoffTimestamp.Sub(reading.Timestamp))
 			state.dropCounter[Late]++
+			span.End()
 			continue
 		}
 
@@ -80,6 +86,7 @@ func Run(cfg Config, in <-chan producer.Reading, aggOut chan<- producer.Reading,
 		if seen {
 			log.Printf("Duplicate entry for key %s discarded", key)
 			state.dropCounter[Duplicate]++
+			span.End()
 			continue
 		} else {
 			if reading.Timestamp.After(state.watermark) {
@@ -96,8 +103,9 @@ func Run(cfg Config, in <-chan producer.Reading, aggOut chan<- producer.Reading,
 			}
 		}
 
-		aggOut <- reading
-		storageOut <- reading
+		span.End()
+		aggOut <- observability.Envelope[producer.Reading]{Data: reading, Ctx: ctx}
+		storageOut <- observability.Envelope[producer.Reading]{Data: reading, Ctx: ctx}
 	}
 	close(aggOut)
 	close(storageOut)

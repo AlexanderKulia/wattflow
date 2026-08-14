@@ -7,9 +7,12 @@ import (
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
+	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
 	sq "github.com/Masterminds/squirrel"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type Config struct {
@@ -18,17 +21,29 @@ type Config struct {
 	BatchFlushTimeout time.Duration
 }
 
-func flushBuckets(ctx context.Context, pool *pgxpool.Pool, buf []aggregation.Bucket) {
+func linksFromEnvelopes[T any](buf []observability.Envelope[T]) []trace.Link {
+	links := make([]trace.Link, 0, len(buf))
+	for _, env := range buf {
+		links = append(links, trace.LinkFromContext(env.Ctx))
+	}
+	return links
+}
+
+func flushBuckets(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.Envelope[aggregation.Bucket]) {
 	if len(buf) == 0 {
 		return
 	}
+
+	ctx, span := tracer.Start(context.Background(), "flush_buckets", trace.WithLinks(linksFromEnvelopes(buf)...))
+	defer span.End()
 
 	query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).
 		Insert("bucket_totals").
 		Columns("device_id", "bucket", "kwh").
 		Suffix("ON CONFLICT (device_id, bucket) DO UPDATE SET kwh = EXCLUDED.kwh")
 
-	for _, bucket := range buf {
+	for _, env := range buf {
+		bucket := env.Data
 		query = query.Values(bucket.DeviceID, bucket.BucketStart, bucket.KWh)
 	}
 
@@ -43,14 +58,18 @@ func flushBuckets(ctx context.Context, pool *pgxpool.Pool, buf []aggregation.Buc
 	}
 }
 
-func flushReadings(ctx context.Context, pool *pgxpool.Pool, buf []producer.Reading) {
+func flushReadings(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.Envelope[producer.Reading]) {
 	if len(buf) == 0 {
 		return
 	}
 
+	ctx, span := tracer.Start(context.Background(), "flush_readings", trace.WithLinks(linksFromEnvelopes(buf)...))
+	defer span.End()
+
 	query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("readings").Columns("device_id", "reading_id", "dedup_key", "timestamp", "kwh").Suffix("ON CONFLICT (dedup_key, timestamp) DO NOTHING")
 
-	for _, reading := range buf {
+	for _, env := range buf {
+		reading := env.Data
 		var readingID any
 		if reading.ReadingID != "" {
 			readingID = reading.ReadingID
@@ -69,7 +88,7 @@ func flushReadings(ctx context.Context, pool *pgxpool.Pool, buf []producer.Readi
 	}
 }
 
-func RunBuckets(cfg Config, in <-chan aggregation.Bucket) {
+func RunBuckets(cfg Config, in <-chan observability.Envelope[aggregation.Bucket]) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, cfg.DSN)
 	if err != nil {
@@ -78,27 +97,28 @@ func RunBuckets(cfg Config, in <-chan aggregation.Bucket) {
 	}
 	defer pool.Close()
 
-	buf := make([]aggregation.Bucket, 0, cfg.BatchSizeBytes/32)
+	tracer := otel.Tracer("wattflow/storage")
+	buf := make([]observability.Envelope[aggregation.Bucket], 0, cfg.BatchSizeBytes/32)
 	var bufBytes int
 	timer := time.NewTimer(cfg.BatchFlushTimeout)
 	defer timer.Stop()
 
 	flushAndReset := func() {
-		flushBuckets(ctx, pool, buf)
+		flushBuckets(tracer, pool, buf)
 		buf = buf[:0]
 		bufBytes = 0
 	}
 
 	for {
 		select {
-		case bucket, ok := <-in:
+		case env, ok := <-in:
 			if !ok {
 				// channel closed
-				flushBuckets(ctx, pool, buf)
+				flushBuckets(tracer, pool, buf)
 				return
 			}
-			buf = append(buf, bucket)
-			bufBytes += bucket.PgSize()
+			buf = append(buf, env)
+			bufBytes += env.Data.PgSize()
 			if bufBytes >= cfg.BatchSizeBytes {
 				flushAndReset()
 				if !timer.Stop() {
@@ -118,7 +138,7 @@ func RunBuckets(cfg Config, in <-chan aggregation.Bucket) {
 	}
 }
 
-func RunReadings(cfg Config, in <-chan producer.Reading) {
+func RunReadings(cfg Config, in <-chan observability.Envelope[producer.Reading]) {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, cfg.DSN)
 	if err != nil {
@@ -127,27 +147,28 @@ func RunReadings(cfg Config, in <-chan producer.Reading) {
 	}
 	defer pool.Close()
 
-	buf := make([]producer.Reading, 0, cfg.BatchSizeBytes/32)
+	tracer := otel.Tracer("wattflow/storage")
+	buf := make([]observability.Envelope[producer.Reading], 0, cfg.BatchSizeBytes/32)
 	var bufBytes int
 	timer := time.NewTimer(cfg.BatchFlushTimeout)
 	defer timer.Stop()
 
 	flushAndReset := func() {
-		flushReadings(ctx, pool, buf)
+		flushReadings(tracer, pool, buf)
 		buf = buf[:0]
 		bufBytes = 0
 	}
 
 	for {
 		select {
-		case reading, ok := <-in:
+		case env, ok := <-in:
 			if !ok {
 				// channel closed
-				flushReadings(ctx, pool, buf)
+				flushReadings(tracer, pool, buf)
 				return
 			}
-			buf = append(buf, reading)
-			bufBytes += reading.PgSize()
+			buf = append(buf, env)
+			bufBytes += env.Data.PgSize()
 			if bufBytes >= cfg.BatchSizeBytes {
 				flushAndReset()
 				if !timer.Stop() {

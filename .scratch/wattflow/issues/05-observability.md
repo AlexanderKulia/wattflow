@@ -4,8 +4,8 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Pipeline envelope carries trace/span context alongside each Reading through every channel
-- [ ] Each stage emits its own span; per-stage latency is visible
-- [ ] A single Reading's trace is followable end-to-end from ingest through persistence
+- [x] Pipeline envelope carries trace/span context alongside each Reading through every channel
+- [x] Each stage emits its own span; per-stage latency is visible
+- [x] A single Reading's journey is correlatable end-to-end from ingest through persistence — real parent-child spans within `produce → ingest → aggregate`; span Links (not shared trace_id) bridge the fan-in points `aggregate → bucket` and `bucket → flush_buckets`/`flush_readings`, since a batching span has many contributors and picking one as "the" parent would be order-dependent, conflicting with the bitwise-identical-regardless-of-order invariant. Not a single continuous waterfall — three linked traces per Reading.

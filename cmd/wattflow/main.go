@@ -1,18 +1,30 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
 	"github.com/AlexanderKulia/wattflow/internal/ingestion"
+	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
 	"github.com/AlexanderKulia/wattflow/internal/storage"
 )
 
 func main() {
 	fmt.Println("wattflow starting")
+	// Handle SIGINT (CTRL+C) gracefully.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	otelShutdown, err := setupOTelSDK(ctx)
+	if err != nil {
+		os.Exit(1)
+	}
+	defer otelShutdown(ctx)
 
 	dsn := "postgres://test:test@localhost:5432/test?sslmode=disable"
 	bucketStorageCfg := storage.Config{
@@ -25,7 +37,7 @@ func main() {
 		BatchSizeBytes:    2 * 1024 * 1024,
 		BatchFlushTimeout: time.Duration(5) * time.Second,
 	}
-	err := storage.Migrate(dsn)
+	err = storage.Migrate(dsn)
 	if err != nil {
 		os.Exit(1)
 	}
@@ -49,10 +61,10 @@ func main() {
 		BucketSize:     time.Duration(15) * time.Minute,
 	}
 
-	ingestCh := make(chan producer.Reading, producerCfg.Count)
-	aggCh := make(chan producer.Reading, producerCfg.Count)
-	bucketStorageCh := make(chan aggregation.Bucket, producerCfg.DeviceCount*2)
-	readingStorageCh := make(chan producer.Reading, producerCfg.Count)
+	ingestCh := make(chan observability.Envelope[producer.Reading], producerCfg.Count)
+	aggCh := make(chan observability.Envelope[producer.Reading], producerCfg.Count)
+	bucketStorageCh := make(chan observability.Envelope[aggregation.Bucket], producerCfg.DeviceCount*2)
+	readingStorageCh := make(chan observability.Envelope[producer.Reading], producerCfg.Count)
 	go producer.Run(producerCfg, ingestCh)
 	go ingestion.Run(ingestConfig, ingestCh, aggCh, readingStorageCh)
 	go aggregation.Run(aggregationCfg, aggCh, bucketStorageCh)

@@ -3,3 +3,6 @@
 .claude/
 CLAUDE.md
 .private/
+casting.yaml
+casting.yaml.lock
+pours/

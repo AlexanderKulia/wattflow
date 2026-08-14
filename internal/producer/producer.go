@@ -1,12 +1,15 @@
 package producer
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strconv"
 	"time"
 
+	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 )
 
 type Reading struct {
@@ -52,7 +55,7 @@ func (cfg *Config) Validate() {
 	}
 }
 
-func Run(cfg Config, out chan<- Reading) {
+func Run(cfg Config, out chan<- observability.Envelope[Reading]) {
 	devices := make([]string, cfg.DeviceCount)
 	for i := range devices {
 		devices[i] = uuid.NewString()
@@ -101,7 +104,12 @@ func Run(cfg Config, out chan<- Reading) {
 		if rand.Float32() <= cfg.DelayProbability {
 			time.Sleep(time.Duration(rand.Float32() * float32(cfg.MaxDelay)))
 		}
-		out <- reading
+		ctx, span := otel.Tracer("wattflow/producer").Start(context.Background(), "produce")
+		span.End()
+		out <- observability.Envelope[Reading]{
+			Data: reading,
+			Ctx:  ctx,
+		}
 		prevReading = &reading
 		count--
 		fmt.Println(reading)

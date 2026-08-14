@@ -6,11 +6,13 @@ import (
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
+	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"go.opentelemetry.io/otel"
 )
 
 // setupTestDB starts a timescaledb container, runs migrations, and returns
@@ -65,11 +67,12 @@ func TestFlushBucketsIsIdempotentOnRetry(t *testing.T) {
 		BucketStart: time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC),
 		KWh:         1.5,
 	}
-	batch := []aggregation.Bucket{bucket}
+	batch := []observability.Envelope[aggregation.Bucket]{{Data: bucket, Ctx: ctx}}
+	tracer := otel.Tracer("test")
 
 	// same batch flushed twice, simulating a retried/replayed write
-	flushBuckets(ctx, pool, batch)
-	flushBuckets(ctx, pool, batch)
+	flushBuckets(tracer, pool, batch)
+	flushBuckets(tracer, pool, batch)
 
 	var gotKWh float64
 	row := pool.QueryRow(ctx,
@@ -94,11 +97,12 @@ func TestFlushReadingsIsIdempotentOnRetry(t *testing.T) {
 		ReadingID: "22222222-2222-2222-2222-222222222222",
 		KWh:       1.5,
 	}
-	batch := []producer.Reading{reading}
+	batch := []observability.Envelope[producer.Reading]{{Data: reading, Ctx: ctx}}
+	tracer := otel.Tracer("test")
 
 	// same batch flushed twice, simulating a retried/replayed write
-	flushReadings(ctx, pool, batch)
-	flushReadings(ctx, pool, batch)
+	flushReadings(tracer, pool, batch)
+	flushReadings(tracer, pool, batch)
 
 	var count int
 	row := pool.QueryRow(ctx,
