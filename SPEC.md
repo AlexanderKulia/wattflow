@@ -53,7 +53,7 @@ Personal project simulating an energy telemetry ingestion pipeline. Domain draws
 
 ## Performance Requirements
 
-- Load-tested with a tool such as `vegeta` or `k6` to find the actual throughput ceiling of the pipeline as built (not an assumed number).
+- Load-tested to find the actual throughput ceiling of the pipeline as built (not an assumed number).
 - At least one documented before/after performance change (e.g., worker pool sizing, batch write size) with measured impact.
 
 ## Stretch Goals (only after core requirements are solid)

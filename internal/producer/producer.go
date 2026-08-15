@@ -2,7 +2,6 @@ package producer
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"strconv"
 	"time"
@@ -112,7 +111,6 @@ func Run(cfg Config, out chan<- observability.Envelope[Reading]) {
 		}
 		prevReading = &reading
 		count--
-		fmt.Println(reading)
 
 		if cfg.BurstSize > 0 {
 			sentInBurst++

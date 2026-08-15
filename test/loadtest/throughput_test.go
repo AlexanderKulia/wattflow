@@ -1,11 +1,8 @@
-package main
+package load_test
 
 import (
-	"context"
-	"fmt"
-	"os"
-	"os/signal"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
@@ -13,21 +10,12 @@ import (
 	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
 	"github.com/AlexanderKulia/wattflow/internal/storage"
+	"github.com/AlexanderKulia/wattflow/internal/testutil"
 )
 
-func main() {
-	fmt.Println("wattflow starting")
-	// Handle SIGINT (CTRL+C) gracefully.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer stop()
+func BenchmarkPipelineThroughput(b *testing.B) {
+	_, _, dsn := testutil.SetupTestDB(b, storage.Migrate)
 
-	otelShutdown, err := setupOTelSDK(ctx)
-	if err != nil {
-		os.Exit(1)
-	}
-	defer otelShutdown(ctx)
-
-	dsn := "postgres://test:test@localhost:5432/test?sslmode=disable"
 	bucketStorageCfg := storage.Config{
 		DSN:               dsn,
 		BatchSizeBytes:    2 * 1024 * 1024,
@@ -35,18 +23,14 @@ func main() {
 	}
 	readingStorageCfg := storage.Config{
 		DSN:               dsn,
-		BatchSizeBytes:    2 * 1024 * 1024,
+		BatchSizeBytes:    8 * 1024 * 1024,
 		BatchFlushTimeout: time.Duration(5) * time.Second,
-	}
-	err = storage.Migrate(dsn)
-	if err != nil {
-		os.Exit(1)
 	}
 
 	producerCfg := producer.Config{
 		DeviceCount:                    1,
-		ReadingCountPerSecond:          10,
-		Count:                          100,
+		ReadingCountPerSecond:          1_000_000,
+		Count:                          50_000,
 		OutOfOrderProbability:          0.1,
 		DuplicateProbability:           0.05,
 		DelayProbability:               0.05,
@@ -67,6 +51,7 @@ func main() {
 	aggCh := make(chan observability.Envelope[producer.Reading], channelBufferSize)
 	bucketStorageCh := make(chan observability.Envelope[aggregation.Bucket], producerCfg.DeviceCount*2)
 	readingStorageCh := make(chan observability.Envelope[producer.Reading], channelBufferSize)
+
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -78,8 +63,13 @@ func main() {
 		storage.RunBuckets(bucketStorageCfg, bucketStorageCh)
 	}()
 
+	b.ResetTimer()
 	go producer.Run(producerCfg, ingestCh)
 	go ingestion.Run(ingestConfig, ingestCh, aggCh, readingStorageCh)
 	go aggregation.Run(aggregationCfg, aggCh, bucketStorageCh)
 	wg.Wait()
+	b.StopTimer()
+
+	eventsPerSec := float64(producerCfg.Count) / b.Elapsed().Seconds()
+	b.ReportMetric(eventsPerSec, "events/sec")
 }

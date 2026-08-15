@@ -1,66 +1,18 @@
 package storage
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
 	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
+	"github.com/AlexanderKulia/wattflow/internal/testutil"
 	"go.opentelemetry.io/otel"
 )
 
-// setupTestDB starts a timescaledb container, runs migrations, and returns
-// a connected pool. Container and pool are torn down via t.Cleanup.
-func setupTestDB(t *testing.T) (context.Context, *pgxpool.Pool) {
-	t.Helper()
-	ctx := context.Background()
-
-	container, err := postgres.Run(ctx,
-		"timescale/timescaledb:latest-pg16",
-		postgres.WithDatabase("test"),
-		postgres.WithUsername("test"),
-		postgres.WithPassword("test"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).
-				WithStartupTimeout(60*time.Second),
-		),
-	)
-	if err != nil {
-		t.Fatalf("failed to start timescaledb container: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := testcontainers.TerminateContainer(container); err != nil {
-			t.Fatalf("failed to terminate container: %v", err)
-		}
-	})
-
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatalf("failed to get connection string: %v", err)
-	}
-
-	if err := Migrate(dsn); err != nil {
-		t.Fatalf("failed to run migrations: %v", err)
-	}
-
-	pool, err := pgxpool.New(ctx, dsn)
-	if err != nil {
-		t.Fatalf("failed to connect to database: %v", err)
-	}
-	t.Cleanup(pool.Close)
-
-	return ctx, pool
-}
-
 func TestFlushBucketsIsIdempotentOnRetry(t *testing.T) {
-	ctx, pool := setupTestDB(t)
+	ctx, pool, _ := testutil.SetupTestDB(t, Migrate)
 
 	bucket := aggregation.Bucket{
 		DeviceID:    "11111111-1111-1111-1111-111111111111",
@@ -89,7 +41,7 @@ func TestFlushBucketsIsIdempotentOnRetry(t *testing.T) {
 }
 
 func TestFlushReadingsIsIdempotentOnRetry(t *testing.T) {
-	ctx, pool := setupTestDB(t)
+	ctx, pool, _ := testutil.SetupTestDB(t, Migrate)
 
 	reading := producer.Reading{
 		DeviceID:  "11111111-1111-1111-1111-111111111111",
