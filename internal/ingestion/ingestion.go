@@ -2,6 +2,7 @@ package ingestion
 
 import (
 	"container/heap"
+	"context"
 	"log"
 	"time"
 
@@ -57,12 +58,26 @@ type Config struct {
 	LatenessWindow time.Duration
 }
 
-func Run(cfg Config, in <-chan observability.Envelope[producer.Reading], aggOut chan<- observability.Envelope[producer.Reading], storageOut chan<- observability.Envelope[producer.Reading]) {
+func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[producer.Reading], aggOut chan<- observability.Envelope[producer.Reading], storageOut chan<- observability.Envelope[producer.Reading]) {
+	defer close(aggOut)
+	defer close(storageOut)
+
 	devices := make(map[string]*deviceState)
 
-	for env := range in {
+	for {
+		var env observability.Envelope[producer.Reading]
+		var open bool
+		select {
+		case <-ctx.Done():
+			return
+		case env, open = <-in:
+			if !open {
+				return
+			}
+		}
+
 		reading := env.Data
-		ctx, span := otel.Tracer("wattflow/ingestion").Start(env.Ctx, "ingest")
+		spanCtx, span := otel.Tracer("wattflow/ingestion").Start(env.Ctx, "ingest")
 
 		state, ok := devices[reading.DeviceID]
 		if !ok {
@@ -104,9 +119,16 @@ func Run(cfg Config, in <-chan observability.Envelope[producer.Reading], aggOut 
 		}
 
 		span.End()
-		aggOut <- observability.Envelope[producer.Reading]{Data: reading, Ctx: ctx}
-		storageOut <- observability.Envelope[producer.Reading]{Data: reading, Ctx: ctx}
+
+		select {
+		case <-ctx.Done():
+			return
+		case aggOut <- observability.Envelope[producer.Reading]{Data: reading, Ctx: spanCtx}:
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case storageOut <- observability.Envelope[producer.Reading]{Data: reading, Ctx: spanCtx}:
+		}
 	}
-	close(aggOut)
-	close(storageOut)
 }

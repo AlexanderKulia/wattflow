@@ -1,6 +1,7 @@
 package load_test
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -96,21 +97,22 @@ func runPipelineOnce(b *testing.B, c paramCombo) {
 	bucketStorageCh := make(chan observability.Envelope[aggregation.Bucket], producerCfg.DeviceCount*2)
 	readingStorageCh := make(chan observability.Envelope[producer.Reading], c.channelBufferSize)
 
+	ctx := context.Background()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		storage.RunReadings(readingStorageCfg, readingStorageCh)
+		storage.RunReadings(ctx, readingStorageCfg, readingStorageCh)
 	}()
 	go func() {
 		defer wg.Done()
-		storage.RunBuckets(bucketStorageCfg, bucketStorageCh)
+		storage.RunBuckets(ctx, bucketStorageCfg, bucketStorageCh)
 	}()
 
 	b.ResetTimer()
-	go producer.Run(producerCfg, ingestCh)
-	go ingestion.Run(ingestConfig, ingestCh, aggCh, readingStorageCh)
-	go aggregation.Run(aggregationCfg, aggCh, bucketStorageCh)
+	go producer.Run(ctx, producerCfg, ingestCh)
+	go ingestion.Run(ctx, ingestConfig, ingestCh, aggCh, readingStorageCh)
+	go aggregation.Run(ctx, aggregationCfg, aggCh, bucketStorageCh)
 	wg.Wait()
 	b.StopTimer()
 

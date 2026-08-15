@@ -30,7 +30,7 @@ func runPipeline(readings []producer.Reading) []aggregation.Bucket {
 		close(inCh)
 	}()
 
-	go ingestion.Run(ingestCfg, inCh, aggCh, storageCh)
+	go ingestion.Run(context.Background(), ingestCfg, inCh, aggCh, storageCh)
 	go func() {
 		for range storageCh {
 		}
@@ -45,7 +45,7 @@ func runPipeline(readings []producer.Reading) []aggregation.Bucket {
 		close(done)
 	}()
 
-	aggregation.Run(aggCfg, aggCh, outCh)
+	aggregation.Run(context.Background(), aggCfg, aggCh, outCh)
 	<-done
 
 	return buckets

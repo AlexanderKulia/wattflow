@@ -23,6 +23,10 @@ type Config struct {
 	BatchFlushTimeout time.Duration
 }
 
+// shutdownFlushTimeout bounds the final best-effort flush issued when ctx is
+// cancelled, so a stalled database can't hang process shutdown indefinitely.
+const shutdownFlushTimeout = 5 * time.Second
+
 func linksFromEnvelopes[T any](buf []observability.Envelope[T]) []trace.Link {
 	links := make([]trace.Link, 0, len(buf))
 	for _, env := range buf {
@@ -31,12 +35,12 @@ func linksFromEnvelopes[T any](buf []observability.Envelope[T]) []trace.Link {
 	return links
 }
 
-func flushBuckets(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.Envelope[aggregation.Bucket]) {
+func flushBuckets(ctx context.Context, tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.Envelope[aggregation.Bucket]) {
 	if len(buf) == 0 {
 		return
 	}
 
-	ctx, span := tracer.Start(context.Background(), "flush_buckets", trace.WithLinks(linksFromEnvelopes(buf)...))
+	ctx, span := tracer.Start(ctx, "flush_buckets", trace.WithLinks(linksFromEnvelopes(buf)...))
 	defer span.End()
 
 	var sqlStr strings.Builder
@@ -64,12 +68,12 @@ func flushBuckets(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.E
 	}
 }
 
-func flushReadings(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.Envelope[producer.Reading]) {
+func flushReadings(ctx context.Context, tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.Envelope[producer.Reading]) {
 	if len(buf) == 0 {
 		return
 	}
 
-	ctx, span := tracer.Start(context.Background(), "flush_readings", trace.WithLinks(linksFromEnvelopes(buf)...))
+	ctx, span := tracer.Start(ctx, "flush_readings", trace.WithLinks(linksFromEnvelopes(buf)...))
 	defer span.End()
 
 	var sqlStr strings.Builder
@@ -103,9 +107,8 @@ func flushReadings(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.
 	}
 }
 
-func RunBuckets(cfg Config, in <-chan observability.Envelope[aggregation.Bucket]) {
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, cfg.DSN)
+func RunBuckets(ctx context.Context, cfg Config, in <-chan observability.Envelope[aggregation.Bucket]) {
+	pool, err := pgxpool.New(context.Background(), cfg.DSN)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unable to connect to database: %v\n", err)
 		os.Exit(1)
@@ -119,17 +122,22 @@ func RunBuckets(cfg Config, in <-chan observability.Envelope[aggregation.Bucket]
 	defer timer.Stop()
 
 	flushAndReset := func() {
-		flushBuckets(tracer, pool, buf)
+		flushBuckets(context.Background(), tracer, pool, buf)
 		buf = buf[:0]
 		bufBytes = 0
 	}
 
 	for {
 		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
+			flushBuckets(shutdownCtx, tracer, pool, buf)
+			cancel()
+			return
 		case env, ok := <-in:
 			if !ok {
 				// channel closed
-				flushBuckets(tracer, pool, buf)
+				flushBuckets(context.Background(), tracer, pool, buf)
 				return
 			}
 			buf = append(buf, env)
@@ -153,9 +161,8 @@ func RunBuckets(cfg Config, in <-chan observability.Envelope[aggregation.Bucket]
 	}
 }
 
-func RunReadings(cfg Config, in <-chan observability.Envelope[producer.Reading]) {
-	ctx := context.Background()
-	pool, err := pgxpool.New(ctx, cfg.DSN)
+func RunReadings(ctx context.Context, cfg Config, in <-chan observability.Envelope[producer.Reading]) {
+	pool, err := pgxpool.New(context.Background(), cfg.DSN)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "unable to connect to database: %v\n", err)
 		os.Exit(1)
@@ -169,17 +176,22 @@ func RunReadings(cfg Config, in <-chan observability.Envelope[producer.Reading])
 	defer timer.Stop()
 
 	flushAndReset := func() {
-		flushReadings(tracer, pool, buf)
+		flushReadings(context.Background(), tracer, pool, buf)
 		buf = buf[:0]
 		bufBytes = 0
 	}
 
 	for {
 		select {
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownFlushTimeout)
+			flushReadings(shutdownCtx, tracer, pool, buf)
+			cancel()
+			return
 		case env, ok := <-in:
 			if !ok {
 				// channel closed
-				flushReadings(tracer, pool, buf)
+				flushReadings(context.Background(), tracer, pool, buf)
 				return
 			}
 			buf = append(buf, env)

@@ -36,16 +36,37 @@ func (bucket *Bucket) PgSize() int {
 	return len(bucket.DeviceID) + 16 // timestampz = 8 bytes, float8 = 8 bytes
 }
 
-func Run(cfg Config, in <-chan observability.Envelope[producer.Reading], out chan<- observability.Envelope[Bucket]) {
+func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[producer.Reading], out chan<- observability.Envelope[Bucket]) {
+	defer close(out)
+
 	devices := make(map[string]*deviceState)
 	tracer := otel.Tracer("wattflow/aggregation")
 
-	for env := range in {
-		reading := env.Data
-		ctx, span := tracer.Start(env.Ctx, "aggregate")
+	for {
+		var env observability.Envelope[producer.Reading]
+		var open bool
+		select {
+		case <-ctx.Done():
+			return
+		case env, open = <-in:
+			if !open {
+				// input drained normally: flush whatever's left in every bucket
+				for deviceID, state := range devices {
+					for bucketStart, acc := range state.bucketTotals {
+						if !emitBucket(ctx, tracer, out, deviceID, bucketStart, acc) {
+							return
+						}
+					}
+				}
+				return
+			}
+		}
 
-		state, ok := devices[reading.DeviceID]
-		if !ok {
+		reading := env.Data
+		spanCtx, span := tracer.Start(env.Ctx, "aggregate")
+
+		state, exists := devices[reading.DeviceID]
+		if !exists {
 			state = &deviceState{
 				watermark:    reading.Timestamp,
 				bucketTotals: make(map[time.Time]*bucketAccumulator),
@@ -54,13 +75,13 @@ func Run(cfg Config, in <-chan observability.Envelope[producer.Reading], out cha
 		}
 
 		bucket := reading.Timestamp.Truncate(cfg.BucketSize)
-		acc, ok := state.bucketTotals[bucket]
-		if !ok {
+		acc, exists := state.bucketTotals[bucket]
+		if !exists {
 			acc = &bucketAccumulator{}
 			state.bucketTotals[bucket] = acc
 		}
 		acc.total += int64(reading.KWh * 1_000_000)
-		acc.links = append(acc.links, trace.LinkFromContext(ctx))
+		acc.links = append(acc.links, trace.LinkFromContext(spanCtx))
 
 		if state.watermark.Before(reading.Timestamp) {
 			state.watermark = reading.Timestamp
@@ -72,23 +93,20 @@ func Run(cfg Config, in <-chan observability.Envelope[producer.Reading], out cha
 		for bucketStart, acc := range state.bucketTotals {
 			bucketEnd := bucketStart.Add(cfg.BucketSize)
 			if !bucketEnd.After(cutoffTimestamp) {
-				emitBucket(tracer, out, reading.DeviceID, bucketStart, acc)
+				if !emitBucket(ctx, tracer, out, reading.DeviceID, bucketStart, acc) {
+					return
+				}
 				delete(state.bucketTotals, bucketStart)
 			}
 		}
 	}
-
-	// flush after in channel closes
-	for key, state := range devices {
-		for bucketStart, acc := range state.bucketTotals {
-			emitBucket(tracer, out, key, bucketStart, acc)
-		}
-	}
-	close(out)
 }
 
-func emitBucket(tracer trace.Tracer, out chan<- observability.Envelope[Bucket], deviceID string, bucketStart time.Time, acc *bucketAccumulator) {
-	ctx, span := tracer.Start(context.Background(), "bucket", trace.WithLinks(acc.links...))
+// emitBucket sends the finished bucket downstream, reporting false if ctx is
+// cancelled before the send completes so the caller can stop without blocking
+// on a consumer that may already have exited.
+func emitBucket(ctx context.Context, tracer trace.Tracer, out chan<- observability.Envelope[Bucket], deviceID string, bucketStart time.Time, acc *bucketAccumulator) bool {
+	spanCtx, span := tracer.Start(context.Background(), "bucket", trace.WithLinks(acc.links...))
 	defer span.End()
 
 	bucket := Bucket{
@@ -96,5 +114,10 @@ func emitBucket(tracer trace.Tracer, out chan<- observability.Envelope[Bucket], 
 		BucketStart: bucketStart,
 		KWh:         float64(acc.total) / 1_000_000,
 	}
-	out <- observability.Envelope[Bucket]{Data: bucket, Ctx: ctx}
+	select {
+	case <-ctx.Done():
+		return false
+	case out <- observability.Envelope[Bucket]{Data: bucket, Ctx: spanCtx}:
+		return true
+	}
 }

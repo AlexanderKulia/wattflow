@@ -54,7 +54,9 @@ func (cfg *Config) Validate() {
 	}
 }
 
-func Run(cfg Config, out chan<- observability.Envelope[Reading]) {
+func Run(ctx context.Context, cfg Config, out chan<- observability.Envelope[Reading]) {
+	defer close(out)
+
 	devices := make([]string, cfg.DeviceCount)
 	for i := range devices {
 		devices[i] = uuid.NewString()
@@ -69,10 +71,10 @@ func Run(cfg Config, out chan<- observability.Envelope[Reading]) {
 	for {
 		if cfg.Duration > 0 {
 			if time.Since(start) >= cfg.Duration {
-				break
+				return
 			}
 		} else if count <= 0 {
-			break
+			return
 		}
 
 		if prevReading != nil && rand.Float32() <= cfg.DuplicateProbability {
@@ -101,13 +103,16 @@ func Run(cfg Config, out chan<- observability.Envelope[Reading]) {
 		}
 
 		if rand.Float32() <= cfg.DelayProbability {
-			time.Sleep(time.Duration(rand.Float32() * float32(cfg.MaxDelay)))
+			if !sleepOrDone(ctx, time.Duration(rand.Float32()*float32(cfg.MaxDelay))) {
+				return
+			}
 		}
-		ctx, span := otel.Tracer("wattflow/producer").Start(context.Background(), "produce")
+		spanCtx, span := otel.Tracer("wattflow/producer").Start(context.Background(), "produce")
 		span.End()
-		out <- observability.Envelope[Reading]{
-			Data: reading,
-			Ctx:  ctx,
+		select {
+		case <-ctx.Done():
+			return
+		case out <- observability.Envelope[Reading]{Data: reading, Ctx: spanCtx}:
 		}
 		prevReading = &reading
 		count--
@@ -116,13 +121,27 @@ func Run(cfg Config, out chan<- observability.Envelope[Reading]) {
 			sentInBurst++
 
 			if sentInBurst >= cfg.BurstSize {
-				time.Sleep(cfg.BurstInterval)
+				if !sleepOrDone(ctx, cfg.BurstInterval) {
+					return
+				}
 				sentInBurst = 0
 			}
 		} else {
-			time.Sleep(time.Second / time.Duration(cfg.ReadingCountPerSecond))
+			if !sleepOrDone(ctx, time.Second/time.Duration(cfg.ReadingCountPerSecond)) {
+				return
+			}
 		}
 	}
+}
 
-	close(out)
+// sleepOrDone waits for d, reporting false if ctx is cancelled first.
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }

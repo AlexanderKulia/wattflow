@@ -69,18 +69,26 @@ func main() {
 	bucketStorageCh := make(chan observability.Envelope[aggregation.Bucket], producerCfg.DeviceCount*2)
 	readingStorageCh := make(chan observability.Envelope[producer.Reading], channelBufferSize)
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
-		storage.RunReadings(readingStorageCfg, readingStorageCh)
+		storage.RunReadings(ctx, readingStorageCfg, readingStorageCh)
 	}()
 	go func() {
 		defer wg.Done()
-		storage.RunBuckets(bucketStorageCfg, bucketStorageCh)
+		storage.RunBuckets(ctx, bucketStorageCfg, bucketStorageCh)
 	}()
-
-	go producer.Run(producerCfg, ingestCh)
-	go ingestion.Run(ingestConfig, ingestCh, aggCh, readingStorageCh)
-	go aggregation.Run(aggregationCfg, aggCh, bucketStorageCh)
+	go func() {
+		defer wg.Done()
+		producer.Run(ctx, producerCfg, ingestCh)
+	}()
+	go func() {
+		defer wg.Done()
+		ingestion.Run(ctx, ingestConfig, ingestCh, aggCh, readingStorageCh)
+	}()
+	go func() {
+		defer wg.Done()
+		aggregation.Run(ctx, aggregationCfg, aggCh, bucketStorageCh)
+	}()
 	wg.Wait()
 }

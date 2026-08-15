@@ -23,8 +23,8 @@ func TestFlushBucketsIsIdempotentOnRetry(t *testing.T) {
 	tracer := otel.Tracer("test")
 
 	// same batch flushed twice, simulating a retried/replayed write
-	flushBuckets(tracer, pool, batch)
-	flushBuckets(tracer, pool, batch)
+	flushBuckets(ctx, tracer, pool, batch)
+	flushBuckets(ctx, tracer, pool, batch)
 
 	var gotKWh float64
 	row := pool.QueryRow(ctx,
@@ -53,8 +53,8 @@ func TestFlushReadingsIsIdempotentOnRetry(t *testing.T) {
 	tracer := otel.Tracer("test")
 
 	// same batch flushed twice, simulating a retried/replayed write
-	flushReadings(tracer, pool, batch)
-	flushReadings(tracer, pool, batch)
+	flushReadings(ctx, tracer, pool, batch)
+	flushReadings(ctx, tracer, pool, batch)
 
 	var count int
 	row := pool.QueryRow(ctx,
@@ -87,10 +87,10 @@ func TestContinuousAggregateMatchesAppBucket(t *testing.T) {
 			Timestamp: bucketStart.Add(10 * time.Minute), KWh: 1.0,
 		}},
 	}
-	flushReadings(tracer, pool, readings)
+	flushReadings(ctx, tracer, pool, readings)
 
 	appBucket := aggregation.Bucket{DeviceID: deviceID, BucketStart: bucketStart, KWh: 1.5}
-	flushBuckets(tracer, pool, []observability.Envelope[aggregation.Bucket]{{Ctx: ctx, Data: appBucket}})
+	flushBuckets(ctx, tracer, pool, []observability.Envelope[aggregation.Bucket]{{Ctx: ctx, Data: appBucket}})
 
 	// Continuous aggregate is WITH NO DATA (Timescale can't materialize inside
 	// the migration transaction); refresh once so the spot-check sees the rows.
