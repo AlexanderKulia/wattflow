@@ -4,7 +4,9 @@
 
 **Blocked by:** 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Doc covers dedup strategy, lateness window sizing, and backpressure policy with rationale
-- [ ] Doc references relevant ADRs and includes final tuned values/measurements from ticket 06
+- [x] Doc covers dedup strategy, lateness window sizing, and backpressure policy with rationale
+- [x] Doc references relevant ADRs and includes final tuned values/measurements from ticket 06
+
+Doc: `DESIGN.md`.

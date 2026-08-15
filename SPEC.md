@@ -24,22 +24,24 @@ Personal project simulating an energy telemetry ingestion pipeline. Domain draws
 - Configurable to inject: out-of-order delivery, duplicate events, delayed events (seconds to minutes), burst load.
 
 ### 2. Ingestion service
-- Accepts events from the producer (in-process channel or HTTP endpoint — TBD in design phase).
-- Deduplicates events by `reading_id` (or content hash if `reading_id` is absent/unreliable).
-- Handles out-of-order arrival via a watermark with a bounded, configurable "allowed lateness" window.
+- Accepts events from the producer over an in-process Go channel.
+- Deduplicates events by `(device_id, reading_id)` (or content hash of device+timestamp+kWh if `reading_id` is absent/unreliable). Keyed on the tuple, not bare `reading_id`, since reading IDs are only guaranteed unique per device, not globally.
+- Handles out-of-order arrival via a per-`device_id` watermark with a bounded, configurable "allowed lateness" window.
 - Events arriving after the lateness window: logged and counted as dropped (not silently discarded).
+- Dedup state held in memory, bounded by watermark-driven eviction (a reading ID older than the lateness window can never legally recur).
 
 ### 3. Aggregation
 - Computes total kWh per `device_id` per fixed time interval (e.g., 15-minute buckets).
 - Aggregate must be **identical** regardless of delivery order or duplication, for a fixed input set — this is the core correctness invariant.
 
 ### 4. Persistence
-- Aggregates written to Postgres or TimescaleDB.
+- Aggregate Buckets written to TimescaleDB, upserted (replace-on-conflict) on `(device_id, bucket)` — a retried/replayed batch write is a safe no-op.
+- Deduped raw Readings also written to a separate TimescaleDB hypertable partitioned on timestamp, as an audit trail alongside the aggregate — insert is `ON CONFLICT DO NOTHING`, since a Reading is an immutable fact, never replaced.
 - Writes are batched, not per-event, for realistic throughput.
 
 ### 5. Backpressure
 - Bounded channels between pipeline stages (ingest → dedupe → aggregate → persist).
-- Explicit, documented policy for what happens when a downstream stage falls behind (block / drop-with-metric / spill-to-disk) — one policy chosen and justified, not arbitrary.
+- Policy for a downstream stage falling behind: block. Upstream stages block on the bounded channel send; dropping or spilling would either break the correctness invariant or solve a durability problem out of scope for a single-process v1.
 
 ### 6. Observability
 - OpenTelemetry tracing across all pipeline stages.
@@ -68,8 +70,10 @@ Personal project simulating an energy telemetry ingestion pipeline. Domain draws
 - Test suite including the correctness harness.
 - A short written design doc explaining the trade-off decisions made (dedup strategy, lateness window sizing, backpressure policy) — this is what gets referenced in interviews, not just the code.
 
-## Explicitly Open Design Decisions (to resolve during design phase, not now)
+## Design Decisions
 
-- In-process channels vs. HTTP/gRPC ingestion endpoint for the producer → ingestion boundary.
-- Exact backpressure policy (block / drop / spill) — pick one and document rationale.
-- Whether Redis or in-memory store is sufficient for dedup state in v1.
+Resolved during design phase; full rationale in `docs/adr/` and `DESIGN.md`.
+
+- Producer → ingestion boundary: in-process Go channel (ADR-0001).
+- Backpressure policy: block (ADR-0002).
+- Dedup state: in-memory, watermark-evicted (ADR-0003).
