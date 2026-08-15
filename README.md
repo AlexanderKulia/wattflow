@@ -42,6 +42,66 @@ Pipeline stages connected by bounded channels, each its own module under `intern
 
 Backpressure: bounded channels between every stage pair, with one explicit, documented policy for what happens when a downstream stage falls behind. See [SPEC.md](SPEC.md) for the full rationale.
 
+## Concepts
+
+### Reading → bucket
+
+Each reading is truncated to its bucket start (`Timestamp.Truncate(BucketSize)`) and its `kWh` accumulated into that bucket's running total, per device:
+
+```mermaid
+flowchart LR
+    R1["reading t=09:03"] --> T["Truncate to BucketSize (15m)"]
+    R2["reading t=09:07"] --> T
+    R3["reading t=09:16"] --> T
+    T --> B1["bucket 09:00\ntotal += kWh"]
+    T --> B2["bucket 09:15\ntotal += kWh"]
+    B1 -->|"bucketEnd <= watermark - LatenessWindow"| F1[emitBucket → storage]
+```
+
+### Watermark & lateness window (ingestion)
+
+Per device, `watermark` tracks the latest `Timestamp` seen so far. Every reading is checked against `cutoff = watermark - LatenessWindow` before dedup. Example with `LatenessWindow = 5m`:
+
+```mermaid
+sequenceDiagram
+    participant In as incoming reading
+    participant D as deviceState
+
+    In->>D: t=09:10
+    D->>D: watermark = 09:10<br/>cutoff = 09:10 - 5m = 09:05
+
+    In->>D: t=09:12 (advances watermark)
+    D->>D: watermark = 09:12<br/>cutoff = 09:12 - 5m = 09:07
+
+    In->>D: t=09:01 (older than 09:07 cutoff)
+    D-->>In: dropped, reason="late"<br/>(ingestion.drops counter)
+```
+
+### The too-late problem: bucket already flushed
+
+Ingestion's lateness check only guards *dedup state* eviction. Aggregation keeps its **own** per-device watermark and flushes (emits + deletes) a bucket once `bucketEnd <= watermark - LatenessWindow` — a reading can pass ingestion's check yet still arrive after aggregation has already flushed and forgotten its bucket. Example with `BucketSize = 15m`, `LatenessWindow = 5m`, bucket `09:00–09:15`:
+
+```mermaid
+sequenceDiagram
+    participant P as producer
+    participant Ing as ingestion
+    participant Agg as aggregation
+    participant St as storage
+
+    P->>Ing: reading, bucket 09:00, t=09:14
+    Ing->>Agg: passes dedup + lateness check
+
+    P->>Ing: reading, bucket 09:15, t=09:21
+    Ing->>Agg: passes dedup + lateness check
+    Note over Agg: watermark advances to 09:21<br/>cutoff = 09:21 - 5m = 09:16<br/>bucketEnd(09:15) <= 09:16 → flush
+    Agg->>St: emitBucket(09:00) then delete from bucketTotals
+
+    P->>Ing: late reading, bucket 09:00, t=09:03
+    Ing->>Agg: passes ingestion's own lateness check
+    Note over Agg: bucket 09:00 not in bucketTotals,<br/>bucketEnd(09:15) <= 09:16 cutoff still holds
+    Agg-->>Agg: dropped, "bucket already flushed"<br/>(aggregation.drops counter)
+```
+
 ## Commands
 
 ```
