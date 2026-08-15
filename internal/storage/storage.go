@@ -4,12 +4,14 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/aggregation"
 	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
-	sq "github.com/Masterminds/squirrel"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -37,23 +39,27 @@ func flushBuckets(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.E
 	ctx, span := tracer.Start(context.Background(), "flush_buckets", trace.WithLinks(linksFromEnvelopes(buf)...))
 	defer span.End()
 
-	query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).
-		Insert("bucket_totals").
-		Columns("device_id", "bucket", "kwh").
-		Suffix("ON CONFLICT (device_id, bucket) DO UPDATE SET kwh = EXCLUDED.kwh")
+	var sqlStr strings.Builder
+	sqlStr.WriteString("INSERT INTO bucket_totals (device_id, bucket, kwh) VALUES ")
+	args := make([]any, 0, len(buf)*3)
 
-	for _, env := range buf {
+	for i, env := range buf {
+		if i > 0 {
+			sqlStr.WriteByte(',')
+		}
+		n := i * 3
+		fmt.Fprintf(&sqlStr, "($%d,$%d,$%d)", n+1, n+2, n+3)
+
 		bucket := env.Data
-		query = query.Values(bucket.DeviceID, bucket.BucketStart, bucket.KWh)
+		args = append(args,
+			pgtype.UUID{Bytes: [16]byte(uuid.MustParse(bucket.DeviceID)), Valid: true},
+			bucket.BucketStart,
+			bucket.KWh,
+		)
 	}
+	sqlStr.WriteString(" ON CONFLICT (device_id, bucket) DO UPDATE SET kwh = EXCLUDED.kwh")
 
-	sqlStr, args, err := query.ToSql()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build query: %v\n", err)
-		return
-	}
-
-	if _, err := pool.Exec(ctx, sqlStr, args...); err != nil {
+	if _, err := pool.Exec(ctx, sqlStr.String(), args...); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write batch: %v\n", err)
 	}
 }
@@ -66,24 +72,33 @@ func flushReadings(tracer trace.Tracer, pool *pgxpool.Pool, buf []observability.
 	ctx, span := tracer.Start(context.Background(), "flush_readings", trace.WithLinks(linksFromEnvelopes(buf)...))
 	defer span.End()
 
-	query := sq.StatementBuilder.PlaceholderFormat(sq.Dollar).Insert("readings").Columns("device_id", "reading_id", "dedup_key", "timestamp", "kwh").Suffix("ON CONFLICT (dedup_key, timestamp) DO NOTHING")
+	var sqlStr strings.Builder
+	sqlStr.WriteString("INSERT INTO readings (device_id, reading_id, dedup_key, timestamp, kwh) VALUES ")
+	args := make([]any, 0, len(buf)*5)
 
-	for _, env := range buf {
-		reading := env.Data
-		var readingID any
-		if reading.ReadingID != "" {
-			readingID = reading.ReadingID
+	for i, env := range buf {
+		if i > 0 {
+			sqlStr.WriteByte(',')
 		}
-		query = query.Values(reading.DeviceID, readingID, reading.DedupKey(), reading.Timestamp, reading.KWh)
-	}
+		n := i * 5
+		fmt.Fprintf(&sqlStr, "($%d,$%d,$%d,$%d,$%d)", n+1, n+2, n+3, n+4, n+5)
 
-	sqlStr, args, err := query.ToSql()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to build query: %v\n", err)
-		return
+		reading := env.Data
+		var readingID pgtype.UUID
+		if reading.ReadingID != "" {
+			readingID = pgtype.UUID{Bytes: [16]byte(uuid.MustParse(reading.ReadingID)), Valid: true}
+		}
+		args = append(args,
+			pgtype.UUID{Bytes: [16]byte(uuid.MustParse(reading.DeviceID)), Valid: true},
+			readingID,
+			reading.DedupKey(),
+			reading.Timestamp,
+			reading.KWh,
+		)
 	}
+	sqlStr.WriteString(" ON CONFLICT (dedup_key, timestamp) DO NOTHING")
 
-	if _, err := pool.Exec(ctx, sqlStr, args...); err != nil {
+	if _, err := pool.Exec(ctx, sqlStr.String(), args...); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to write batch: %v\n", err)
 	}
 }
