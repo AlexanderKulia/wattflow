@@ -52,6 +52,8 @@ go test ./test/correctness/...   # correctness/replay harness
 go vet ./...
 ```
 
+Or via Makefile: `make build`, `make run`, `make test`, `make test-correctness`, `make vet`.
+
 ## Profiling
 
 CPU/heap/block profiles from a real load test run, no code changes needed — `go test -bench` supports these natively. Sweet-spot config from the throughput matrix (see `.scratch/wattflow/issues/06-load-test-perf-tuning.md`):
@@ -77,5 +79,7 @@ go tool pprof -list=ToSql cpu.prof           > cpu_list_tosql.txt
 go tool pprof -list=flushReadings mem.prof   > mem_list_flushReadings.txt
 go tool pprof -list=flushReadings block.prof > block_list_flushReadings.txt
 ```
+
+Or via Makefile, whole chain in one command: `make profile`.
 
 Note: CPU profile only samples on-CPU time — a goroutine blocked on a network read (e.g. `pool.Exec` waiting on the DB round-trip) shows up as nothing, not as cost. Check `Total samples` vs `Duration` in the profile header; low coverage means the workload is I/O-bound and `block.prof` is the more informative profile.
