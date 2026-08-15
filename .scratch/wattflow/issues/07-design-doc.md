@@ -1,6 +1,6 @@
 # 07 — Design doc
 
-**What to build:** A short written design doc explaining the trade-off decisions made (dedup strategy, lateness window sizing, backpressure policy), referencing the project's ADRs (`docs/adr/`) and the final tuned values from ticket 06 (measured throughput ceiling, chosen batch/pool sizes). This is the deliverable referenced in interviews, not just the code.
+**What to build:** A short written design doc explaining the trade-off decisions made (dedup strategy, lateness window sizing, backpressure policy), referencing the project's ADRs (`docs/adr/`) and the final tuned values from ticket 06 (measured throughput ceiling, chosen batch/pool sizes). This is the artifact that documents the "why," not just the code.
 
 **Blocked by:** 06
 
