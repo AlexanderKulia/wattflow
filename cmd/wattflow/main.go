@@ -31,12 +31,12 @@ func main() {
 	bucketStorageCfg := storage.Config{
 		DSN:               dsn,
 		BatchSizeBytes:    2 * 1024 * 1024,
-		BatchFlushTimeout: time.Duration(30) * time.Second,
+		BatchFlushTimeout: 30 * time.Second,
 	}
 	readingStorageCfg := storage.Config{
 		DSN:               dsn,
 		BatchSizeBytes:    2 * 1024 * 1024,
-		BatchFlushTimeout: time.Duration(5) * time.Second,
+		BatchFlushTimeout: 5 * time.Second,
 	}
 	err = storage.Migrate(dsn)
 	if err != nil {
@@ -54,13 +54,13 @@ func main() {
 		UnreliableReadingIDProbability: 0.01,
 	}
 	producerCfg.Validate()
-	latenessWindow := time.Duration(15) * time.Minute
+	latenessWindow := 15 * time.Minute
 	ingestConfig := ingestion.Config{
 		LatenessWindow: latenessWindow,
 	}
 	aggregationCfg := aggregation.Config{
 		LatenessWindow: latenessWindow,
-		BucketSize:     time.Duration(15) * time.Minute,
+		BucketSize:     15 * time.Minute,
 	}
 
 	const channelBufferSize = 256
