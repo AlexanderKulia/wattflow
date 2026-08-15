@@ -20,4 +20,7 @@ jobs:
             exit 1
           fi
       - run: go vet ./...
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
       - run: go test -race ./...

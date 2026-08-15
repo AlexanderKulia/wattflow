@@ -25,7 +25,11 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
-	defer otelShutdown(ctx)
+	defer func() {
+		if err := otelShutdown(ctx); err != nil {
+			fmt.Println(err)
+		}
+	}()
 
 	dsn := "postgres://test:test@localhost:5432/test?sslmode=disable"
 	bucketStorageCfg := storage.Config{
