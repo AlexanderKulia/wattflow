@@ -6,7 +6,25 @@ Not a production system (no auth/multi-tenancy/UI) and not a Kafka/Flink clone �
 
 ## Status
 
-Early scaffolding. Module boundaries exist (`cmd/wattflow`, `internal/{producer,ingestion,aggregation,storage,observability}`, `test/correctness`); most are still empty. See [SPEC.md](SPEC.md) for the full requirements/design doc.
+Pipeline is built end to end: producer, ingestion (dedup + watermark), aggregation, batched storage, and OpenTelemetry observability, with graceful shutdown, a drop-counter metric, ingestion unit tests, and a CI workflow running `gofmt`, `go vet`, and `go test -race`. See [SPEC.md](SPEC.md) for the full requirements/design doc.
+
+## Results
+
+- **21,831 events/sec** throughput ceiling, from a measured config sweep (channel buffer size x batch size x flush timeout).
+- **164.78MB → 99.34MB** allocation reduction in the hottest storage path, from CPU/heap profiling that found and fixed two concrete allocation sources.
+
+Full perf matrix and profiling narrative: [.scratch/wattflow/issues/](.scratch/wattflow/issues/) — detailed working logs behind these numbers.
+
+## Prerequisites
+
+- A Postgres/TimescaleDB instance reachable at the DSN hardcoded in `cmd/wattflow/main.go` (`localhost:5432` by default) — `go run ./cmd/wattflow` connects to it directly, it does not start one for you:
+
+  ```
+  docker compose up -d
+  ```
+
+  `internal/storage`'s tests spin up their own via testcontainers (Docker required), separate from this.
+- An OTel collector listening on `localhost:4317` (see `cmd/wattflow/otel.go`) — without one, spans/metrics/logs fail to export silently, no error surfaced. See the [SigNoz docs](https://signoz.io/docs/install/docker/) for a local collector setup.
 
 ## Correctness invariant
 
