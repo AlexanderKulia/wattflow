@@ -4,8 +4,10 @@
 
 **Blocked by:** 08
 
-**Status:** needs-triage
+**Status:** done
 
-- [ ] Continuous aggregate defined over raw Reading table, same bucket interval as app aggregation
-- [ ] Documented (design doc, ticket 07) as a read-optimization/comparison layer, explicitly not the correctness source of truth
-- [ ] Spot-check: continuous aggregate output matches app-computed Bucket for a sample device/interval
+- [x] Continuous aggregate defined over raw Reading table, same bucket interval as app aggregation
+- [x] Documented (design doc, ticket 07) as a read-optimization/comparison layer, explicitly not the correctness source of truth
+- [x] Spot-check: continuous aggregate output matches app-computed Bucket for a sample device/interval
+
+View: `reading_bucket_totals`, `internal/storage/migrations/0001_init.up.sql`. `WITH NO DATA` (Timescale continuous aggregates can't materialize inside the migration's transaction) — real-time aggregation covers query-time reads, but a fresh continuous aggregate's materialization threshold starts at creation time, not `-infinity`, so pre-existing rows need one `refresh_continuous_aggregate` call to become visible. Wired into test setup, not a manual step: `TestContinuousAggregateMatchesAppBucket`, `internal/storage/storage_test.go`.

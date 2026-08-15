@@ -33,3 +33,11 @@ Reading-storage batch size: 2MB → 8MB. Ceiling **36,615 → 86,114 events/sec,
 Transport: in-process channels ([ADR-0001](docs/adr/0001-in-process-channel-transport.md)), not HTTP — load test is a Go benchmark (`test/loadtest/throughput_test.go`) against real pipeline + real TimescaleDB, not an HTTP tool.
 
 Full numbers and bottleneck trace: `.scratch/wattflow/issues/06-load-test-perf-tuning.md`.
+
+## Continuous aggregate as read-path comparison, not correctness source
+
+`reading_bucket_totals` ([ADR-0008](docs/adr/0008-persist-raw-readings-alongside-aggregate-buckets.md)) is a TimescaleDB continuous aggregate (`time_bucket()`) over the raw `readings` hypertable, same 15min interval as app aggregation. It exists to show explicit awareness of Timescale's native bucketing, and to spot-check the app-computed `bucket_totals` against a second, independent computation of the same numbers.
+
+It is not part of the correctness invariant's input path. The aggregation module — dedup, watermark, order-independent summation — is this project's core correctness demonstration; delegating bucketing to the database would remove the reason that module exists. `bucket_totals` (app-computed) stays the source of truth; `reading_bucket_totals` is comparison-only.
+
+Spot-checked in `TestContinuousAggregateMatchesAppBucket` (`internal/storage/storage_test.go`): same device/bucket, both paths produce identical kWh.

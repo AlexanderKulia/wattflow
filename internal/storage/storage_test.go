@@ -69,3 +69,45 @@ func TestFlushReadingsIsIdempotentOnRetry(t *testing.T) {
 		t.Errorf("persisted reading count = %d after retried write, want 1 (no duplicate row)", count)
 	}
 }
+
+func TestContinuousAggregateMatchesAppBucket(t *testing.T) {
+	ctx, pool, _ := testutil.SetupTestDB(t, Migrate)
+	tracer := otel.Tracer("test")
+
+	deviceID := "11111111-1111-1111-1111-111111111111"
+	bucketStart := time.Date(2026, 1, 1, 10, 30, 0, 0, time.UTC)
+
+	readings := []observability.Envelope[producer.Reading]{
+		{Ctx: ctx, Data: producer.Reading{
+			DeviceID: deviceID, ReadingID: "22222222-2222-2222-2222-222222222222",
+			Timestamp: bucketStart, KWh: 0.5,
+		}},
+		{Ctx: ctx, Data: producer.Reading{
+			DeviceID: deviceID, ReadingID: "33333333-3333-3333-3333-333333333333",
+			Timestamp: bucketStart.Add(10 * time.Minute), KWh: 1.0,
+		}},
+	}
+	flushReadings(tracer, pool, readings)
+
+	appBucket := aggregation.Bucket{DeviceID: deviceID, BucketStart: bucketStart, KWh: 1.5}
+	flushBuckets(tracer, pool, []observability.Envelope[aggregation.Bucket]{{Ctx: ctx, Data: appBucket}})
+
+	// Continuous aggregate is WITH NO DATA (Timescale can't materialize inside
+	// the migration transaction); refresh once so the spot-check sees the rows.
+	if _, err := pool.Exec(ctx, "CALL refresh_continuous_aggregate('reading_bucket_totals', NULL, NULL)"); err != nil {
+		t.Fatalf("failed to refresh continuous aggregate: %v", err)
+	}
+
+	var caKWh float64
+	row := pool.QueryRow(ctx,
+		"SELECT kwh FROM reading_bucket_totals WHERE device_id = $1 AND bucket = $2",
+		deviceID, bucketStart,
+	)
+	if err := row.Scan(&caKWh); err != nil {
+		t.Fatalf("failed to query continuous aggregate: %v", err)
+	}
+
+	if caKWh != appBucket.KWh {
+		t.Errorf("continuous aggregate kwh = %v, want %v (app-computed bucket)", caKWh, appBucket.KWh)
+	}
+}
