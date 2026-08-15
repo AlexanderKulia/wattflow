@@ -2,7 +2,7 @@
 
 ## Context
 
-Personal project simulating an energy telemetry ingestion pipeline. Domain draws on prior production experience in energy-sector time-series/topology modeling, without reusing any proprietary code or data. Goal is defensible engineering decisions (dedup strategy, backpressure policy, correctness guarantees under adversarial data delivery), not a tutorial-style demo.
+Personal project simulating an energy telemetry ingestion pipeline. Domain modeled on real-world energy time-series/topology systems, using synthetic data and no proprietary code. Goal is defensible engineering decisions (dedup strategy, backpressure policy, correctness guarantees under adversarial data delivery), not a tutorial-style demo.
 
 ## Goals
 
@@ -68,7 +68,7 @@ Personal project simulating an energy telemetry ingestion pipeline. Domain draws
 
 - Go source repository with clear module boundaries (producer, ingestion, aggregation, persistence, observability).
 - Test suite including the correctness harness.
-- A short written design doc explaining the trade-off decisions made (dedup strategy, lateness window sizing, backpressure policy) — this is what gets referenced in interviews, not just the code.
+- A short written design doc explaining the trade-off decisions made (dedup strategy, lateness window sizing, backpressure policy) — the artifact that documents the "why," not just the code.
 
 ## Design Decisions
 
