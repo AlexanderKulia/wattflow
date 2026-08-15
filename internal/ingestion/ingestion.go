@@ -9,6 +9,8 @@ import (
 	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 )
 
 type expiryHeap []dedupEntry
@@ -48,10 +50,9 @@ func (r DropReason) String() string {
 }
 
 type deviceState struct {
-	seen        map[string]struct{} // existence check
-	expiry      expiryHeap          // min-heap by timestamp, for eviction
-	watermark   time.Time           // latest Reading.Timestamp seen for this device
-	dropCounter map[DropReason]int
+	seen      map[string]struct{} // existence check
+	expiry    expiryHeap          // min-heap by timestamp, for eviction
+	watermark time.Time           // latest Reading.Timestamp seen for this device
 }
 
 type Config struct {
@@ -63,6 +64,14 @@ func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[produ
 	defer close(storageOut)
 
 	devices := make(map[string]*deviceState)
+
+	dropCounter, err := otel.Meter("wattflow/ingestion").Int64Counter(
+		"ingestion.drops",
+		metric.WithDescription("Readings dropped during ingestion, by device and reason"),
+	)
+	if err != nil {
+		log.Fatalf("failed to create drop counter: %v", err)
+	}
 
 	for {
 		var env observability.Envelope[producer.Reading]
@@ -82,8 +91,7 @@ func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[produ
 		state, ok := devices[reading.DeviceID]
 		if !ok {
 			state = &deviceState{
-				seen:        make(map[string]struct{}),
-				dropCounter: make(map[DropReason]int),
+				seen: make(map[string]struct{}),
 			}
 			devices[reading.DeviceID] = state
 		}
@@ -91,7 +99,10 @@ func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[produ
 		cutoffTimestamp := state.watermark.Add(-cfg.LatenessWindow)
 		if reading.Timestamp.Before(cutoffTimestamp) {
 			log.Printf("Reading for %s for DeviceID %s dropped because it was %s late", reading.Timestamp, reading.DeviceID, cutoffTimestamp.Sub(reading.Timestamp))
-			state.dropCounter[Late]++
+			dropCounter.Add(spanCtx, 1, metric.WithAttributes(
+				attribute.String("device_id", reading.DeviceID),
+				attribute.String("reason", Late.String()),
+			))
 			span.End()
 			continue
 		}
@@ -100,7 +111,10 @@ func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[produ
 		_, seen := state.seen[key]
 		if seen {
 			log.Printf("Duplicate entry for key %s discarded", key)
-			state.dropCounter[Duplicate]++
+			dropCounter.Add(spanCtx, 1, metric.WithAttributes(
+				attribute.String("device_id", reading.DeviceID),
+				attribute.String("reason", Duplicate.String()),
+			))
 			span.End()
 			continue
 		} else {
