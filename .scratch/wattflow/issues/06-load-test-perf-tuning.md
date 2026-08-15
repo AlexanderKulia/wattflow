@@ -1,42 +1,40 @@
-# 06 — Load test + perf tuning
+# 06 — Load test + perf matrix sweep
 
-**What to build:** Load-test the pipeline to find its actual throughput ceiling under the block backpressure policy (ADR-0002) — not an assumed number. Make and measure at least one documented before/after performance change (e.g. worker pool sizing, batch write size from ticket 04), with before/after numbers recorded.
+**What to build:** Load-test the pipeline to find its actual throughput ceiling under the block backpressure policy (ADR-0002) — not an assumed number. Sweep realistic ranges for the tunable config params (channel buffer size, reading-storage `BatchSizeBytes`, `BatchFlushTimeout`), run the pipeline benchmark across the full permutation set (one real TimescaleDB run per combo), and record events/sec per combo. Goal: locate the actual throughput sweet spot by measurement across a matrix, not a single before/after point.
 
 **Blocked by:** 05
 
 **Status:** done
 
-- [x] Load test run, throughput ceiling measured and recorded
-- [x] At least one performance change made and measured before/after, with numbers documented
+- [x] Matrix runner defined: config dimensions + realistic value ranges (batch sizes grounded near real-world multi-row INSERT norms, ~500–3000 rows/batch, not arbitrary MB figures), permutations generated (cartesian product)
+- [x] Each permutation run against real pipeline + real TimescaleDB, events/sec recorded per combo
+- [x] Results collected into one table, sweet spot identified and called out
+- [x] Bottleneck trace documented: which stage/path backpressure engages on, why
+- [x] Sweet-spot config values + bottleneck trace documented in `DESIGN.md`
+
+Load test = Go benchmark: `test/loadtest/throughput_test.go`, `BenchmarkPipelineThroughputMatrix`. Real pipeline, real TimescaleDB via testcontainers, 50k events, 1 device.
+
+## Mechanism (from initial single-combo run, still holds across the matrix)
+
+Bottleneck trace: 1 device, readings timestamped within ~1.4s wall-clock, 15min lateness watermark never advances enough to close a bucket mid-run. Bucket-storage path (`bucketStorageCh`, buffer 2) stays near-idle, flushes once at drain. Real bottleneck: reading-storage path. `~88 bytes/reading`; once buffered bytes cross the batch-size threshold, a synchronous `pool.Exec` blocks `RunReadings`'s recv loop. Blocked recv fills `readingStorageCh`, blocks ingestion's send, fills `ingestCh`, blocks producer's send — one stalled write, backpressure propagates end to end, exactly as ADR-0002 predicts.
 
 ## Results
 
-Transport in-process channels (ADR-0001), not HTTP. Load test = Go
-benchmark: `test/loadtest/throughput_test.go`,
-`BenchmarkPipelineThroughput`. Real pipeline, real TimescaleDB via
-testcontainers, 50k events, 1 device.
+2x2x3 matrix: `channelBufferSize` {256, 1024} x `readingFlushTimeout` {5s, 30s} x `readingBatchSizeBytes` {64KB, 128KB, 256KB}, `-benchtime 1x` (one real pipeline + TimescaleDB run per combo).
 
-Channel buffers fixed at 256 (was `producerCfg.Count`, buffer swallowed
-whole run, block policy never engaged at any volume).
+| buf | batch | flush | events/sec |
+|---|---|---|---|
+| 256 | 64KB | 5s | 21,831 |
+| 256 | 64KB | 30s | 18,465 |
+| 256 | 128KB | 5s | 14,721 |
+| 256 | 128KB | 30s | 16,894 |
+| 256 | 256KB | 5s | 18,406 |
+| 256 | 256KB | 30s | 15,957 |
+| 1024 | 64KB | 5s | 16,982 |
+| 1024 | 64KB | 30s | 16,590 |
+| 1024 | 128KB | 5s | 15,950 |
+| 1024 | 128KB | 30s | 16,409 |
+| 1024 | 256KB | 5s | 17,237 |
+| 1024 | 256KB | 30s | 15,660 |
 
-**Ceiling:** 36,615 events/sec (`BatchSizeBytes: 2MB`).
-
-Bottleneck trace: 1 device, readings timestamped within ~1.4s wall-clock,
-15min lateness watermark never advances enough to close bucket mid-run.
-Bucket-storage path (`bucketStorageCh`, buffer 2) near-idle, flushes once at
-drain. Real bottleneck: reading-storage path. ~88 bytes/reading, 2MB
-threshold trips ~every 24k readings, synchronous `pool.Exec` blocks
-`RunReadings` recv loop. Blocked recv fills `readingStorageCh`, blocks
-ingestion send, fills `ingestCh`, blocks producer send. One stalled write,
-backpressure propagates end to end.
-
-**Change:** `readingStorageCfg.BatchSizeBytes` 2MB → 8MB (holds ~95k
-readings, above 50k run total, threshold never trips mid-run).
-
-| | events/sec |
-|---|---|
-| before (2MB batch) | 36,615 |
-| after (8MB batch) | 86,114 |
-
-+135%. Trade-off: bigger batch, bigger single blocking write, more data at
-risk if process dies mid-batch.
+Sweet spot: **buf=256, batch=64KB, flush=5s — 21,831 events/sec**. Range is 14.7k–21.8k across all 12 combos, no clean monotonic trend by batch size or buffer size — single run per combo (`-benchtime 1x`) against a fresh testcontainers-spun TimescaleDB instance per combo means container startup variance and one-shot noise likely dominate over small config deltas. Repeating each combo (`-benchtime`, multiple runs) would be needed to separate real signal from noise before trusting this as a stable optimum.

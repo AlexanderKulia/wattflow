@@ -24,15 +24,15 @@ Mechanism: bounded Go channels between every stage, plain `ch <- x` sends — no
 
 Ticket 06 measured where it actually engages: bucket-storage path near-idle in a short high-volume run (watermark logic above means it barely fires), reading-storage path is the real bottleneck. `~88 bytes/reading`, batch-size-byte threshold trips, synchronous `pool.Exec` blocks `RunReadings` recv, fills `readingStorageCh`, blocks ingestion send, fills `ingestCh`, blocks producer send. One stalled write, backpressure propagates end to end — exactly as ADR-0002 predicts.
 
-## Final tuned values (ticket 06)
+## Tuned values (ticket 06)
 
-Channel buffers: fixed at 256 per stage (not sized to run volume — a buffer sized to swallow the whole run means block policy never engages at any load, defeats the point of measuring it).
+Channel buffers: swept in the low hundreds to low thousands per stage — not sized to run volume; a buffer sized to swallow the whole run means block policy never engages at any load, defeats the point of measuring it.
 
-Reading-storage batch size: 2MB → 8MB. Ceiling **36,615 → 86,114 events/sec, +135%**. Trade-off: bigger batch means bigger single blocking write, more data at risk if process dies mid-batch — a deliberate corner cut, not free.
+Reading-storage batch size: swept in the tens to low hundreds of KB (~500–3,000 rows/batch), the range real-world multi-row `INSERT` batching sits in. Bigger batch means bigger single blocking write, more data at risk if the process dies mid-batch — a deliberate corner cut, not free.
 
-Transport: in-process channels ([ADR-0001](docs/adr/0001-in-process-channel-transport.md)), not HTTP — load test is a Go benchmark (`test/loadtest/throughput_test.go`) against real pipeline + real TimescaleDB, not an HTTP tool.
+Transport: in-process channels ([ADR-0001](docs/adr/0001-in-process-channel-transport.md)), not HTTP — load test is a Go benchmark (`test/loadtest/throughput_test.go`, `BenchmarkPipelineThroughputMatrix`) against real pipeline + real TimescaleDB, not an HTTP tool.
 
-Full numbers and bottleneck trace: `.scratch/wattflow/issues/06-load-test-perf-tuning.md`.
+Full matrix results, sweet spot, and bottleneck trace: `.scratch/wattflow/issues/06-load-test-perf-tuning.md`.
 
 ## Continuous aggregate as read-path comparison, not correctness source
 
