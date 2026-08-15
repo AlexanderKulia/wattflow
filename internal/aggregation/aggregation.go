@@ -2,11 +2,14 @@ package aggregation
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/AlexanderKulia/wattflow/internal/observability"
 	"github.com/AlexanderKulia/wattflow/internal/producer"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -41,6 +44,14 @@ func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[produ
 
 	devices := make(map[string]*deviceState)
 	tracer := otel.Tracer("wattflow/aggregation")
+
+	dropCounter, err := otel.Meter("wattflow/aggregation").Int64Counter(
+		"aggregation.drops",
+		metric.WithDescription("Readings dropped during aggregation because their bucket was already flushed"),
+	)
+	if err != nil {
+		log.Fatalf("failed to create drop counter: %v", err)
+	}
 
 	for {
 		var env observability.Envelope[producer.Reading]
@@ -77,6 +88,15 @@ func Run(ctx context.Context, cfg Config, in <-chan observability.Envelope[produ
 		bucket := reading.Timestamp.Truncate(cfg.BucketSize)
 		acc, exists := state.bucketTotals[bucket]
 		if !exists {
+			cutoffTimestamp := state.watermark.Add(-cfg.LatenessWindow)
+			if !bucket.Add(cfg.BucketSize).After(cutoffTimestamp) {
+				log.Printf("Reading for %s for DeviceID %s dropped: bucket %s already flushed", reading.Timestamp, reading.DeviceID, bucket)
+				dropCounter.Add(spanCtx, 1, metric.WithAttributes(
+					attribute.String("device_id", reading.DeviceID),
+				))
+				span.End()
+				continue
+			}
 			acc = &bucketAccumulator{}
 			state.bucketTotals[bucket] = acc
 		}
